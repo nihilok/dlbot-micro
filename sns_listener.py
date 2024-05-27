@@ -36,4 +36,5 @@ def sns():
 
 
 if __name__ == "__main__":
-    app.run("0.0.0.0", 9999, debug=False)
+    port = int(os.environ["DLBOT_SNS_PORT"])
+    app.run("0.0.0.0", port, debug=False)
