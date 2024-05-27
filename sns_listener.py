@@ -11,7 +11,7 @@ app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
 
 
-@app.route("sns", methods=["POST"])
+@app.route("/sns", methods=["POST"])
 def sns():
     message_type = request.headers.get("x-amz-sns-message-type")
     if message_type == "SubscriptionConfirmation":
