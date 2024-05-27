@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from typing import NamedTuple
@@ -48,7 +49,7 @@ def get_metadata_local(result):
     return artist, title
 
 
-async def set_tags(filepath, title, artist=None):
+def set_tags(filepath, title, artist=None):
     try:
         metatag = EasyID3(filepath)
         metatag["title"] = title
