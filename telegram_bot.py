@@ -8,7 +8,8 @@ from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 
-sns_client = boto3.client("sns", region_name="eu-west-2")
+session = boto3.Session(profile_name="LambdaFlowFullAccess")
+sns_client = session.client("sns", region_name="eu-west-2")
 
 
 def parse_message_for_urls(message):
