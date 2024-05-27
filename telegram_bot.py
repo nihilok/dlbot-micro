@@ -5,8 +5,8 @@ import boto3
 from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
                           filters)
 
-SNS_TOPIC = os.getenv("SNS_POST_TOPIC")
-BOT_TOKEN = os.getenv("DLBOT_TOKEN")
+SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
+BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 
 sns_client = boto3.client("sns", region_name="eu-west-2")
 
@@ -25,8 +25,6 @@ async def message_handler(update, context):
         sns_client.publish(
             TopicArn=SNS_TOPIC,
             Message=f"{update.effective_chat.id}::{message_id}::{url}",
-            Subject="Download Complete",
-            MessageGroupId=update.effective_chat.id,
         )
 
 

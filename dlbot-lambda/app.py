@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import subprocess
@@ -17,28 +18,28 @@ logger = logging.getLogger(__name__)
 
 
 def lambda_handler(event, context):
-    # Check ffmpeg version
-    ffmpeg_version = subprocess.check_output(["ffmpeg", "-version"])
-    logger.info(f"ffmpeg version: {ffmpeg_version.decode('utf-8')}")
-
     # Extract the URL and chat_id from the SNS message
-    message = event["Records"][0]["Sns"]["Message"]
-    chat_id, message_id, url = message.split("::")
+    try:
+        message = event["Records"][0]["Sns"]["Message"]
+        chat_id, message_id, url = message.split("::")
+    except (KeyError, ValueError):
+        return {"statusCode": 400}
 
     # Download file(s) using yt-dlp
-    files = download_url(url)  # Single file unless playlist url
-    for file in files:
-        s3_key = file.filename.replace("/tmp/", f"{chat_id}/")
+    files = download_url(url)
+    for file in files:  # Single file unless playlist url
         # Save the content to S3
+        s3_key = file.filename.replace("/tmp/", f"{chat_id}/")
         with open(file.filename, "rb") as f:
             s3_client.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=f.read())
+
+        asyncio.run(bot.delete_message(chat_id, message_id))
+        asyncio.run(bot.send_message(chat_id, f"S3 Object Key: {s3_key}"))
 
         # Notify the Telegram bot that the download is complete
         sns_client.publish(
             TopicArn=SNS_TOPIC,
             Message=f"{message_id}::{s3_key}",
-            Subject="Download Complete",
-            MessageGroupId=chat_id,
         )
 
     return {
