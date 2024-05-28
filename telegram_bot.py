@@ -7,9 +7,25 @@ from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
 
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
+TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 
 session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sns_client = session.client("sns", region_name="eu-west-2")
+dynamodb = session.resource("dynamodb")
+table = dynamodb.Table(TABLE_NAME)
+
+
+class NotAuthenticated(ValueError):
+    pass
+
+
+def authenticate(user_id, chat_id):
+    chat_response = table.get_item(Key={"id": chat_id})
+    user_response = table.get_item(Key={"id": user_id})
+    if "Item" not in chat_response:
+        if "Item" not in user_response:
+            raise NotAuthenticated
+    return True
 
 
 def parse_message_for_urls(message):
@@ -19,6 +35,7 @@ def parse_message_for_urls(message):
 
 
 async def message_handler(update, context):
+    authenticate(update.message.from_user.id, update.effective_chat.id)
     for url in parse_message_for_urls(update.message.text):
         message_id = await context.bot.send_message(
             update.effective_chat.id, "Downloading..."
