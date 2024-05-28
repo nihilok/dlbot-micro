@@ -1,4 +1,3 @@
-import logging
 import os
 import re
 
@@ -16,20 +15,14 @@ dynamodb = session.resource("dynamodb", region_name="eu-west-2")
 table = dynamodb.Table(TABLE_NAME)
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-
 class NotAuthenticated(ValueError):
     pass
 
 
 def authenticate(user_id, chat_id):
     chat_response = table.get_item(Key={"id": chat_id})
-    logger.info(chat_response)
     if "Item" not in chat_response:
         user_response = table.get_item(Key={"id": user_id})
-        logger.info(user_response)
         if "Item" not in user_response:
             raise NotAuthenticated
     return True
@@ -42,7 +35,6 @@ def parse_message_for_urls(message):
 
 
 async def message_handler(update, context):
-    logger.info(f"Received Update: {update}")
     authenticate(update.message.from_user.id, update.effective_chat.id)
     for url in parse_message_for_urls(update.message.text):
         message_id = await context.bot.send_message(
