@@ -1,7 +1,5 @@
-import asyncio
 import logging
 import os
-import subprocess
 
 import boto3
 
@@ -21,8 +19,10 @@ def lambda_handler(event, context):
     # Extract the URL and chat_id from the SNS message
     try:
         message = event["Records"][0]["Sns"]["Message"]
+        logger.info(f"Message received: {message}")
         chat_id, message_id, url = message.split("::")
-    except (KeyError, ValueError):
+    except Exception as e:
+        logger.error(f"ERROR: {e} ({message})")
         return {"statusCode": 400}
 
     # Download file(s) using yt-dlp
@@ -33,10 +33,7 @@ def lambda_handler(event, context):
         with open(file.filename, "rb") as f:
             s3_client.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=f.read())
 
-        asyncio.run(bot.delete_message(chat_id, message_id))
-        asyncio.run(bot.send_message(chat_id, f"S3 Object Key: {s3_key}"))
-
-        # Notify the Telegram bot that the download is complete
+        # Notify that the download is complete
         sns_client.publish(
             TopicArn=SNS_TOPIC,
             Message=f"{message_id}::{s3_key}",
