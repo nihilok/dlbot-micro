@@ -1,9 +1,9 @@
+import logging
 import os
 import re
 
 import boto3
-from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
-                          filters)
+from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters
 
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
@@ -15,14 +15,20 @@ dynamodb = session.resource("dynamodb", region_name="eu-west-2")
 table = dynamodb.Table(TABLE_NAME)
 
 
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
 class NotAuthenticated(ValueError):
     pass
 
 
 def authenticate(user_id, chat_id):
     chat_response = table.get_item(Key={"id": chat_id})
-    user_response = table.get_item(Key={"id": user_id})
+    logger.info(chat_response)
     if "Item" not in chat_response:
+        user_response = table.get_item(Key={"id": user_id})
+        logger.info(user_response)
         if "Item" not in user_response:
             raise NotAuthenticated
     return True
