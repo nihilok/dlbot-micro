@@ -42,6 +42,7 @@ def parse_message_for_urls(message):
 
 
 async def message_handler(update, context):
+    logger.info(f"Received Update: {update}")
     authenticate(update.message.from_user.id, update.effective_chat.id)
     for url in parse_message_for_urls(update.message.text):
         message_id = await context.bot.send_message(
