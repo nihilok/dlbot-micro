@@ -11,7 +11,7 @@ TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 
 session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sns_client = session.client("sns", region_name="eu-west-2")
-dynamodb = session.resource("dynamodb")
+dynamodb = session.resource("dynamodb", region_name="eu-west-2")
 table = dynamodb.Table(TABLE_NAME)
 
 
