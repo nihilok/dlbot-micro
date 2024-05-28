@@ -24,6 +24,7 @@ async def do_the_thing(s3_key, message_id):
     except TimedOut:
         # Was most likely successful
         pass
+    s3.delete_object(Bucket=BUCKET_NAME, Key=s3_key)
 
 
 def lambda_handler(event, _):
