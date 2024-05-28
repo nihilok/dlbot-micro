@@ -3,7 +3,8 @@ import os
 import re
 
 import boto3
-from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters
+from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
+                          filters)
 
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
