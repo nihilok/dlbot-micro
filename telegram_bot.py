@@ -43,11 +43,21 @@ async def message_handler(update, context):
         try:
             sns_client.publish(
                 TopicArn=SNS_TOPIC,
-                Message=f"{update.effective_chat.id}::{message.id}::{url}",
+                Message=url,
+                MessageAttributes={
+                    "chat_id": {
+                        "DataType": "String",
+                        "StringValue": str(update.effective_chat.id),
+                    },
+                    "message_id": {
+                        "DataType": "String",
+                        "StringValue": str(message.id),
+                    },
+                },
             )
         except Exception as e:
             await context.bot.edit_message_text(
-                update.effective_chat.id, message.id, "Something went wrong 😢"
+                update.effective_chat.id, message.id, f"Something went wrong 😢\n{e}"
             )
 
 

@@ -10,38 +10,56 @@ BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 BUCKET_NAME = os.environ["BUCKET_NAME"]
 
 
-def get_new_files(reverse_order=False):
-    search_dir = "./"
-    files = filter(os.path.isfile, os.listdir(search_dir))
-    files = [os.path.join(search_dir, f) for f in files]  # add path to each file
-    files.sort(key=lambda x: os.path.getmtime(x), reverse=reverse_order)
-    for file in files:
-        if "s__" in file and ".mp3" in file:
-            yield file
+# def get_new_files(reverse_order=False):
+#     search_dir = "./"
+#     files = filter(os.path.isfile, os.listdir(search_dir))
+#     files = [os.path.join(search_dir, f) for f in files]  # add path to each file
+#     files.sort(key=lambda x: os.path.getmtime(x), reverse=reverse_order)
+#     for file in files:
+#         if "s__" in file and ".mp3" in file:
+#             yield file
+#
+#
+# def split_large_file(filepath):
+#     subprocess.call(["mp3splt", filepath, "-t", "30.0.0"])
 
 
-def split_large_file(filepath):
-    subprocess.call(["mp3splt", filepath, "-t", "30.0.0"])
+async def edit_message_ignore_errors(bot, text, chat_id, message_id):
+    try:
+        await bot.edit_message_text(text, chat_id, message_id)
+    except Exception:
+        pass
+
+
+async def delete_message_ignore_errors(bot, chat_id, message_id):
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception:
+        pass
 
 
 async def do_the_thing(s3_key, message_id):
     bot = Bot(token=BOT_TOKEN)
     chat_id, *_ = s3_key.split("/")
-    try:
-        await bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
+    await edit_message_ignore_errors(bot, "Sending audio...", chat_id, message_id)
     s3 = boto3.client("s3")
     obj = s3.get_object(Bucket=BUCKET_NAME, Key=s3_key)
     data = obj["Body"].read()
-    await send_audio(bot, chat_id, data)
+    try:
+        await send_audio(bot, chat_id, data)
+    except Exception as e:
+        await send_error_message(
+            chat_id, message_id, f"😭Something went wrong sending audio\n{e}"
+        )
+        return
     s3.delete_object(Bucket=BUCKET_NAME, Key=s3_key)
+    await delete_message_ignore_errors(bot, chat_id, message_id)
 
 
 async def send_error_message(chat_id, message_id, error_message):
     bot = Bot(token=BOT_TOKEN)
     try:
-        await bot.edit_message_text(chat_id, message_id, error_message)
+        await bot.edit_message_text(error_message, chat_id, message_id)
     except Exception:
         await bot.send_message(chat_id, error_message)
 
@@ -58,23 +76,31 @@ def lambda_handler(event, _):
     del _
     try:
         message = event["Records"][0]["Sns"]["Message"]
-        message_id, *remainder = message.split("::")
-        del message
-        del event
     except (KeyError, ValueError):
         return {"statusCode": 400}
 
-    if len(remainder) == 3:
-        chat_id, error_message, url = remainder
+    attributes = event["Records"][0]["Sns"]["MessageAttributes"]
+
+    try:
+        chat_id = int(attributes["chat_id"]["Value"])
+        message_id = int(attributes["message_id"]["Value"])
+    except Exception as e:
+        return {
+            "statusCode": 400,
+            "error": {"class": e.__class__.__name__, "text": str(e)},
+        }
+
+    if (url := attributes.get("url")) is not None:
+        error = message
         asyncio.run(
             send_error_message(
-                chat_id, message_id, f"Failed to download {url}\n({error_message})"
+                chat_id,
+                message_id,
+                f"😭Sending mp3 from {url} failed\n({error})",
             )
         )
-    elif len(remainder) == 1:
-        s3_key = remainder
     else:
-        return {"statusCode": 400}
+        s3_key = message
+        asyncio.run(do_the_thing(s3_key, message_id))
 
-    asyncio.run(do_the_thing(s3_key, message_id))
     return {"statusCode": 200}
