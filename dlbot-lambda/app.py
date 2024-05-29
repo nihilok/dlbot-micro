@@ -2,11 +2,13 @@ import logging
 import os
 
 import boto3
+from telegram import Bot
 
 from lib import download_url
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 S3_BUCKET = os.environ["S3_BUCKET"]
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 MAX_FILE_SIZE = int(50e6)  # 50MB
 
 sns_client = boto3.client("sns", region_name="eu-west-2")
@@ -52,12 +54,12 @@ def lambda_handler(event, context):
     # but the download was completed successfully.
     prefix = f"{chat_id}/{hash(message)}/"
     existing = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
-
+    bot = Bot(token=BOT_TOKEN)
     if "Contents" not in existing:
         existing = {"Contents": []}
         # Download file(s) using yt-dlp
         url = message
-        files = download_url(url)
+        files = download_url(url, bot, chat_id, message_id)
         for file in files:  # Single file unless URL is for a playlist
             file_size = os.path.getsize(file.filename)
             if file_size >= MAX_FILE_SIZE:
