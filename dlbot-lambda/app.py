@@ -7,10 +7,10 @@ from lib import download_url
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 S3_BUCKET = os.environ["S3_BUCKET"]
+MAX_FILE_SIZE = int(50e6)  # 50MB
 
 sns_client = boto3.client("sns", region_name="eu-west-2")
 s3_client = boto3.client("s3")
-
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,14 @@ def lambda_handler(event, context):
     # Download file(s) using yt-dlp
     files = download_url(url)
     for file in files:  # Single file unless playlist url
+        file_size = os.path.getsize(file.filename)
+        if file_size >= MAX_FILE_SIZE:
+            sns_client.publish(
+                TopicArn=SNS_TOPIC,
+                Message=f"{message_id}::{chat_id}::File size too large::{file.url}",
+            )
+            continue
+
         # Save the content to S3
         s3_key = file.filename.replace("/tmp/", f"{chat_id}/")
         with open(file.filename, "rb") as f:

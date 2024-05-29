@@ -37,13 +37,18 @@ def parse_message_for_urls(message):
 async def message_handler(update, context):
     authenticate(update.message.from_user.id, update.effective_chat.id)
     for url in parse_message_for_urls(update.message.text):
-        message_id = await context.bot.send_message(
+        message = await context.bot.send_message(
             update.effective_chat.id, "Downloading..."
         )
-        sns_client.publish(
-            TopicArn=SNS_TOPIC,
-            Message=f"{update.effective_chat.id}::{message_id.id}::{url}",
-        )
+        try:
+            sns_client.publish(
+                TopicArn=SNS_TOPIC,
+                Message=f"{update.effective_chat.id}::{message.id}::{url}",
+            )
+        except Exception as e:
+            await context.bot.edit_message_text(
+                update.effective_chat.id, message.id, "Something went wrong 😢"
+            )
 
 
 def build_bot(token: str) -> Application:
