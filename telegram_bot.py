@@ -2,6 +2,7 @@ import os
 import re
 
 import boto3
+import yt_dlp
 from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
                           filters)
 
@@ -34,30 +35,61 @@ def parse_message_for_urls(message):
         yield url
 
 
+async def playlist_info(url, bot, chat_id):
+    with yt_dlp.YoutubeDL({"extract_flat": True}) as flat:
+        info = flat.extract_info(url, download=False)
+        title = info["title"]
+        count = info["playlist_count"]
+        await bot.send_message(chat_id, f"{title} ({count} tracks)")
+        for entry in info["entries"]:
+            yield entry["url"]
+
+
 async def message_handler(update, context):
     authenticate(update.message.from_user.id, update.effective_chat.id)
     for url in parse_message_for_urls(update.message.text):
         message = await context.bot.send_message(
-            update.effective_chat.id, "Downloading..."
+            update.effective_chat.id, "Initiating download..."
         )
         try:
-            sns_client.publish(
-                TopicArn=SNS_TOPIC,
-                Message=url,
-                MessageAttributes={
-                    "chat_id": {
-                        "DataType": "String",
-                        "StringValue": str(update.effective_chat.id),
+            if "playlist" in url:
+                async for playlist_entry_url in playlist_info(
+                    url, context.bot, update.effective_chat.id
+                ):
+                    sns_client.publish(
+                        TopicArn=SNS_TOPIC,
+                        Message=playlist_entry_url,
+                        MessageAttributes={
+                            "chat_id": {
+                                "DataType": "String",
+                                "StringValue": str(update.effective_chat.id),
+                            },
+                            "message_id": {
+                                "DataType": "String",
+                                "StringValue": str(message.id),
+                            },
+                        },
+                    )
+            else:
+                sns_client.publish(
+                    TopicArn=SNS_TOPIC,
+                    Message=url,
+                    MessageAttributes={
+                        "chat_id": {
+                            "DataType": "String",
+                            "StringValue": str(update.effective_chat.id),
+                        },
+                        "message_id": {
+                            "DataType": "String",
+                            "StringValue": str(message.id),
+                        },
                     },
-                    "message_id": {
-                        "DataType": "String",
-                        "StringValue": str(message.id),
-                    },
-                },
-            )
+                )
         except Exception as e:
             await context.bot.edit_message_text(
-                update.effective_chat.id, message.id, f"Something went wrong 😢\n{e}"
+                update.effective_chat.id,
+                message.id,
+                f"Something went wrong 😢\n{e}",
             )
 
 

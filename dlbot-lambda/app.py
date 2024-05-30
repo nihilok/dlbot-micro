@@ -3,7 +3,7 @@ import os
 
 import boto3
 
-from lib import download_url
+from lib import delete_message_blocking, download_url, send_message_blocking
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 S3_BUCKET = os.environ["S3_BUCKET"]
@@ -29,7 +29,7 @@ def get_message_attrs(chat_id, message_id, url=None):
     return attrs
 
 
-def lambda_handler(event, context):
+def lambda_handler(event, _):
     # Extract the URL and chat_id/message_id from the SNS message/attributes
     message = None
     try:
@@ -54,12 +54,13 @@ def lambda_handler(event, context):
     prefix = f"{chat_id}/{hash(message)}/"
     existing = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
     if "Contents" not in existing:
-        existing = {"Contents": []}
-
         # Download file(s) using yt-dlp
         url = message
-        files = download_url(url, chat_id, message_id)
-        for file in files:  # Single file unless URL is for a playlist
+        delete_message_blocking(chat_id, message_id)
+        message_id = send_message_blocking(chat_id, "Downloading...")
+        for file in download_url(
+            url, chat_id, message_id
+        ):  # Yields a single file unless URL is for a playlist
             file_size = os.path.getsize(file.filename)
             if file_size >= MAX_FILE_SIZE:
                 sns_client.publish(
@@ -74,14 +75,19 @@ def lambda_handler(event, context):
 
             with open(file.filename, "rb") as f:
                 s3_client.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=f.read())
-            existing["Contents"].append({"Key": s3_key})
 
-    for obj in existing["Contents"]:
-        # Notify that the download is complete
-        sns_client.publish(
-            TopicArn=SNS_TOPIC,
-            Message=obj["Key"],
-            MessageAttributes=get_message_attrs(chat_id, message_id),
-        )
-
+            # Notify that the download is complete
+            sns_client.publish(
+                TopicArn=SNS_TOPIC,
+                Message=s3_key,
+                MessageAttributes=get_message_attrs(chat_id, message_id),
+            )
+    else:
+        for obj in existing["Contents"]:
+            # Notify that the download is complete
+            sns_client.publish(
+                TopicArn=SNS_TOPIC,
+                Message=obj["Key"],
+                MessageAttributes=get_message_attrs(chat_id, message_id),
+            )
     return {"statusCode": 200}

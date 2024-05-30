@@ -31,7 +31,8 @@ async def edit_message_ignore_errors(bot, text, chat_id, message_id):
         pass
 
 
-async def delete_message_ignore_errors(bot, chat_id, message_id):
+async def delete_message_ignore_errors(chat_id, message_id):
+    bot = Bot(token=BOT_TOKEN)
     try:
         await bot.delete_message(chat_id, message_id)
     except Exception:
@@ -53,7 +54,7 @@ async def do_the_thing(s3_key, message_id):
         )
         return
     s3.delete_object(Bucket=BUCKET_NAME, Key=s3_key)
-    await delete_message_ignore_errors(bot, chat_id, message_id)
+    await delete_message_ignore_errors(chat_id, message_id)
 
 
 async def send_error_message(chat_id, message_id, error_message):

@@ -26,6 +26,12 @@ def send_message_blocking(chat_id, text) -> int:
         return r.json()["result"]["message_id"]
 
 
+def delete_message_blocking(chat_id, message_id):
+    requests.get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage?chat_id={chat_id}&message_id={message_id}"
+    )
+
+
 DOWNLOAD_OPTIONS = {
     "paths": {"home": "/tmp/", "temp": "/tmp/"},
     "outtmpl": "%(id)s.%(ext)s",
@@ -120,45 +126,37 @@ def download_single_url(url, chat_id, message_id):
 
 def download_playlist(url, chat_id, message_id):
     """Download each video in the playlist and return the information as a list of tuples"""
-    opts = get_opts(chat_id, message_id)
     with yt_dlp.YoutubeDL({"extract_flat": True}) as flat:
         info = flat.extract_info(url, download=False)
         title = info["title"]
         count = info["playlist_count"]
         send_message_blocking(chat_id, f"{title} ({count} tracks)")
-
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url)
-        for entry in info["entries"]:
-            artist, title = get_metadata_local(entry)
-            filename = f"/tmp/{entry['id']}.mp3"
-            if not os.path.exists(filename):
-                raise FileNotFoundError
-            set_tags(filename, title, artist)
-            yield File(filename, artist, title, url), 0
+    for entry in info["entries"]:
+        result, exit_code = download_single_url(entry["url"], chat_id, message_id)
+        if not exit_code:
+            yield result
 
 
-def download_url(url: str, chat_id, message_id) -> list[File]:
+def download_url(url: str, chat_id, message_id):
     if "playlist" in url:
-        files = []
-        for file, exit_code in download_playlist(url, chat_id, message_id):
-            if not exit_code:
-                files.append(file)
-        return files
+        return download_playlist(url, chat_id, message_id)
     else:
         file, exit_code = download_single_url(url, chat_id, message_id)
         if not exit_code:
-            return [file]
+            return (f for f in [file])
         raise Exception(f"Could not download from URL: {url}")
 
 
 if __name__ == "__main__":
     channel_id = -1001213653335
-    message_id = send_message_blocking(channel_id, "TEST")
+    m_id = send_message_blocking(channel_id, "TEST")
     print(
-        download_url(
-            "https://music.youtube.com/playlist?list=OLAK5uy_nSimGj4CXHflKeUOh_JjLOnR75Kp6Q064&si=zpprCbpnKTIc1lc6",
-            chat_id=channel_id,
-            message_id=message_id,
-        )
+        [
+            f
+            for f in download_url(
+                "https://music.youtube.com/playlist?list=OLAK5uy_nSimGj4CXHflKeUOh_JjLOnR75Kp6Q064&si=zpprCbpnKTIc1lc6",
+                chat_id=channel_id,
+                message_id=m_id,
+            )
+        ]
     )
