@@ -26,6 +26,54 @@ def send_message_blocking(chat_id, text) -> int:
         return r.json()["result"]["message_id"]
 
 
+import io
+import wave
+
+
+def create_dummy_audio():
+    # Parameters for the dummy audio
+    nchannels = 1
+    sampwidth = 2
+    framerate = 44100
+    nframes = framerate  # 1 second of audio
+    comptype = "NONE"
+    compname = "not compressed"
+
+    # Create a buffer to hold the audio data
+    buffer = io.BytesIO()
+
+    # Create a wave file
+    with wave.open(buffer, "wb") as wf:
+        wf.setnchannels(nchannels)
+        wf.setsampwidth(sampwidth)
+        wf.setframerate(framerate)
+        wf.setnframes(nframes)
+        wf.setcomptype(comptype, compname)
+        # Generate silent audio (all zeros)
+        wf.writeframes(b"\x00" * nframes * sampwidth * nchannels)
+
+    # Move the buffer position to the beginning
+    buffer.seek(0)
+    return buffer
+
+
+def send_dummy_audio_message(chat_id) -> int:
+    audio = create_dummy_audio()
+    r = requests.get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio?chat_id={chat_id}",
+        files={
+            "audio": audio.read(),
+            "title": "placeholder audio...",
+            "caption": "This is a placeholder...",
+        },
+    )
+    if r.ok:
+        print(r.json()["result"]["message_id"])
+        return r.json()["result"]["message_id"]
+    else:
+        print("FAILED", r.status_code, r.text)
+
+
 def delete_message_blocking(chat_id, message_id):
     requests.get(
         f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage?chat_id={chat_id}&message_id={message_id}"
@@ -149,14 +197,17 @@ def download_url(url: str, chat_id, message_id):
 
 if __name__ == "__main__":
     channel_id = -1001213653335
-    m_id = send_message_blocking(channel_id, "TEST")
-    print(
-        [
-            f
-            for f in download_url(
-                "https://music.youtube.com/playlist?list=OLAK5uy_nSimGj4CXHflKeUOh_JjLOnR75Kp6Q064&si=zpprCbpnKTIc1lc6",
-                chat_id=channel_id,
-                message_id=m_id,
-            )
-        ]
+    # m_id = send_message_blocking(channel_id, "TEST")
+    a_id = send_dummy_audio_message(
+        channel_id,
     )
+    # print(
+    #     [
+    #         f
+    #         for f in download_url(
+    #             "https://music.youtube.com/playlist?list=OLAK5uy_nSimGj4CXHflKeUOh_JjLOnR75Kp6Q064&si=zpprCbpnKTIc1lc6",
+    #             chat_id=channel_id,
+    #             message_id=m_id,
+    #         )
+    #     ]
+    # )

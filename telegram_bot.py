@@ -1,5 +1,6 @@
 import os
 import re
+import time
 
 import boto3
 import yt_dlp
@@ -70,6 +71,7 @@ async def message_handler(update, context):
                             },
                         },
                     )
+                    time.sleep(1)
             else:
                 sns_client.publish(
                     TopicArn=SNS_TOPIC,

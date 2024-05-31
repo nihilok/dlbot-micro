@@ -3,7 +3,8 @@ import os
 
 import boto3
 
-from lib import delete_message_blocking, download_url, send_message_blocking
+from lib import (create_dummy_audio, delete_message_blocking, download_url,
+                 send_dummy_audio_message, send_message_blocking)
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 S3_BUCKET = os.environ["S3_BUCKET"]
@@ -16,7 +17,7 @@ s3_client = boto3.client("s3")
 logger = logging.getLogger(__name__)
 
 
-def get_message_attrs(chat_id, message_id, url=None):
+def get_message_attrs(chat_id, message_id, placeholder_id=None, url=None):
     attrs = {
         "message_id": {
             "DataType": "String",
@@ -24,6 +25,11 @@ def get_message_attrs(chat_id, message_id, url=None):
         },
         "chat_id": {"DataType": "String", "StringValue": str(chat_id)},
     }
+    if placeholder_id:
+        attrs["placeholder_id"] = {
+            "DataType": "String",
+            "StringValue": str(placeholder_id),
+        }
     if url:
         attrs["url"] = {"DataType": "String", "StringValue": url}
     return attrs
@@ -49,6 +55,10 @@ def lambda_handler(event, _):
             "error": {"class": e.__class__.__name__, "text": str(e)},
         }
 
+    delete_message_blocking(chat_id, message_id)
+    message_id = send_message_blocking(chat_id, "Downloading...")
+    placeholder_message_id = send_dummy_audio_message(chat_id)
+
     # Check whether file(s) already exist, it's possible the send operation failed,
     # but the download was completed successfully.
     prefix = f"{chat_id}/{hash(message)}/"
@@ -56,8 +66,6 @@ def lambda_handler(event, _):
     if "Contents" not in existing:
         # Download file(s) using yt-dlp
         url = message
-        delete_message_blocking(chat_id, message_id)
-        message_id = send_message_blocking(chat_id, "Downloading...")
         for file in download_url(
             url, chat_id, message_id
         ):  # Yields a single file unless URL is for a playlist
@@ -66,7 +74,12 @@ def lambda_handler(event, _):
                 sns_client.publish(
                     TopicArn=SNS_TOPIC,
                     Message="File size too large",
-                    MessageAttributes=get_message_attrs(chat_id, message_id, url),
+                    MessageAttributes=get_message_attrs(
+                        chat_id,
+                        message_id,
+                        placeholder_id=placeholder_message_id,
+                        url=url,
+                    ),
                 )
                 continue
 
@@ -80,7 +93,9 @@ def lambda_handler(event, _):
             sns_client.publish(
                 TopicArn=SNS_TOPIC,
                 Message=s3_key,
-                MessageAttributes=get_message_attrs(chat_id, message_id),
+                MessageAttributes=get_message_attrs(
+                    chat_id, message_id, placeholder_message_id
+                ),
             )
     else:
         for obj in existing["Contents"]:
@@ -88,6 +103,8 @@ def lambda_handler(event, _):
             sns_client.publish(
                 TopicArn=SNS_TOPIC,
                 Message=obj["Key"],
-                MessageAttributes=get_message_attrs(chat_id, message_id),
+                MessageAttributes=get_message_attrs(
+                    chat_id, message_id, placeholder_message_id
+                ),
             )
     return {"statusCode": 200}
