@@ -1,5 +1,7 @@
+import io
 import logging
 import os
+import wave
 from typing import NamedTuple, Type
 
 import boto3
@@ -7,8 +9,6 @@ import requests
 import yt_dlp
 from mutagen.easyid3 import EasyID3
 from yt_dlp.cache import Cache
-import io
-import wave
 
 from yt_downloader_cache import S3PersistentCache
 
