@@ -219,18 +219,4 @@ def download_url(url: str, chat_id=None, message_id=None, cache_cls=Cache):
 
 
 if __name__ == "__main__":
-    channel_id = -1001213653335
-    # m_id = send_message_blocking(channel_id, "TEST")
-    # a_id = send_dummy_audio_message(
-    #     channel_id,
-    # )
-    # channel_id = -1001213653335
-    # message_id = send_message_blocking(channel_id, "TEST")
-    # print(
-    #     download_url(
-    #         "https://music.youtube.com/playlist?list=OLAK5uy_nSimGj4CXHflKeUOh_JjLOnR75Kp6Q064&si=zpprCbpnKTIc1lc6",
-    #         chat_id=channel_id,
-    #         message_id=message_id,
-    #     )
-    # )
     print(download_url("https://www.youtube.com/watch?v=bgWUwywrXOM"))
