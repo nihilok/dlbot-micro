@@ -3,8 +3,12 @@ import os
 
 from boto3_clients import s3_client, sns_client
 from constants import S3_BUCKET
-from lib import (delete_message_blocking, download_url,
-                 send_dummy_audio_message, send_message_blocking)
+from lib import (
+    delete_message_blocking,
+    download_url,
+    send_dummy_audio_message,
+    send_message_blocking,
+)
 from yt_downloader_cache import S3PersistentCache
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
