@@ -1,4 +1,5 @@
 boto3
 yt-dlp
 mutagen
+yt-dlp-youtube-oauth2 @ git+https://github.com/coletdjnz/yt-dlp-youtube-oauth2.git
 requests

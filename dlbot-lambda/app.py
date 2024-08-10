@@ -1,18 +1,20 @@
 import logging
 import os
 
-import boto3
+from boto3_clients import s3_client, sns_client
+from constants import S3_BUCKET, YT_PASSWORD, YT_USERNAME
+from yt_downloader_cache import S3PersistentCache
 
-from lib import (create_dummy_audio, delete_message_blocking, download_url,
-                 send_dummy_audio_message, send_message_blocking)
+from lib import (
+    delete_message_blocking,
+    download_url,
+    send_dummy_audio_message,
+    send_message_blocking,
+)
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
-S3_BUCKET = os.environ["S3_BUCKET"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 MAX_FILE_SIZE = int(50e6)  # 50MB
-
-sns_client = boto3.client("sns", region_name="eu-west-2")
-s3_client = boto3.client("s3")
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +69,12 @@ def lambda_handler(event, _):
         # Download file(s) using yt-dlp
         url = message
         for file in download_url(
-            url, chat_id, message_id
+            url,
+            chat_id,
+            message_id,
+            YT_USERNAME,
+            YT_PASSWORD,
+            cache_cls=S3PersistentCache,
         ):  # Yields a single file unless URL is for a playlist
             file_size = os.path.getsize(file.filename)
             if file_size >= MAX_FILE_SIZE:
