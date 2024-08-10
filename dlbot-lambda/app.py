@@ -2,7 +2,7 @@ import logging
 import os
 
 from boto3_clients import s3_client, sns_client
-from constants import S3_BUCKET, YT_PASSWORD, YT_USERNAME
+from constants import S3_BUCKET
 from yt_downloader_cache import S3PersistentCache
 
 from lib import (
@@ -72,8 +72,6 @@ def lambda_handler(event, _):
             url,
             chat_id,
             message_id,
-            YT_USERNAME,
-            YT_PASSWORD,
             cache_cls=S3PersistentCache,
         ):  # Yields a single file unless URL is for a playlist
             file_size = os.path.getsize(file.filename)

@@ -109,6 +109,8 @@ s3_client = boto3.client("s3")
 
 class Downloader(yt_dlp.YoutubeDL):
     def __init__(self, options, cache_cls: Type[Cache] = S3PersistentCache):
+        options["username"] = "oauth2"
+        options["password"] = ""
         super().__init__(options)
         self.cache = cache_cls(self)
 
@@ -166,22 +168,17 @@ def status_hook(last_status, chat_id, message_id, d):
         logger.warning(e, exc_info=True)
 
 
-def get_opts(chat_id=None, message_id=None, username=None, password=""):
+def get_opts(chat_id=None, message_id=None):
     last_status = None
     opts = DOWNLOAD_OPTIONS.copy()
     opts["progress_hooks"] = [
         lambda d: status_hook(last_status, chat_id, message_id, d)
     ]
-    if username:
-        opts["username"] = username
-        opts["password"] = password
     return opts
 
 
-def download_single_url(
-    url, chat_id=None, message_id=None, username=None, password=None, cache_cls=Cache
-):
-    opts = get_opts(chat_id, message_id, username, password)
+def download_single_url(url, chat_id=None, message_id=None, cache_cls=Cache):
+    opts = get_opts(chat_id, message_id)
     with Downloader(opts, cache_cls) as ydl:
         result = ydl.extract_info(url, download=True)
         if "entries" in result:
@@ -196,9 +193,7 @@ def download_single_url(
         return File(filename, artist, title, url), 0
 
 
-def download_playlist(
-    url, chat_id=None, message_id=None, username=None, password=None, cache_cls=Cache
-):
+def download_playlist(url, chat_id=None, message_id=None, cache_cls=Cache):
     """Download each video in the playlist and return the information as a list of tuples"""
     with Downloader({"extract_flat": True}, cache_cls) as flat:
         info = flat.extract_info(url, download=False)
@@ -207,21 +202,17 @@ def download_playlist(
         send_message_blocking(chat_id, f"{title} ({count} tracks)")
     for entry in info["entries"]:
         result, exit_code = download_single_url(
-            entry["url"], chat_id, message_id, username, password, cache_cls
+            entry["url"], chat_id, message_id, cache_cls
         )
         if not exit_code:
             yield result
 
 
-def download_url(
-    url: str, chat_id=None, message_id=None, username=None, password="", cache_cls=Cache
-):
+def download_url(url: str, chat_id=None, message_id=None, cache_cls=Cache):
     if "playlist" in url:
         return download_playlist(url, chat_id, message_id)
     else:
-        file, exit_code = download_single_url(
-            url, chat_id, message_id, username, password, cache_cls
-        )
+        file, exit_code = download_single_url(url, chat_id, message_id, cache_cls)
         if not exit_code:
             return (f for f in [file])
         raise Exception(f"Could not download from URL: {url}")
