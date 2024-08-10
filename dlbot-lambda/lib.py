@@ -1,10 +1,16 @@
+import io
 import logging
 import os
-from typing import NamedTuple
+import wave
+from typing import NamedTuple, Type
 
+import boto3
 import requests
 import yt_dlp
 from mutagen.easyid3 import EasyID3
+from yt_dlp.cache import Cache
+
+from yt_downloader_cache import S3PersistentCache
 
 logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
@@ -24,10 +30,6 @@ def send_message_blocking(chat_id, text) -> int:
     )
     if r.ok:
         return r.json()["result"]["message_id"]
-
-
-import io
-import wave
 
 
 def create_dummy_audio():
@@ -102,6 +104,17 @@ class File(NamedTuple):
     url: str
 
 
+s3_client = boto3.client("s3")
+
+
+class Downloader(yt_dlp.YoutubeDL):
+    def __init__(self, options, cache_cls: Type[Cache] = S3PersistentCache):
+        options["username"] = "oauth2"
+        options["password"] = ""
+        super().__init__(options)
+        self.cache = cache_cls(self)
+
+
 def get_metadata_local(result):
     artist = result.get("artist", None)
     if artist:
@@ -130,35 +143,43 @@ def set_tags(filepath, title, artist=None):
         logger.error(f"Error settings tags: {e}")
 
 
-def get_opts(chat_id, message_id):
-    def update_message(text):
-        try:
-            update_message_blocking(text, chat_id, message_id)
-        except Exception as e:
-            logger.warning(e, exc_info=True)
+def update_message(text, chat_id, message_id):
+    if not chat_id:
+        return
+    try:
+        update_message_blocking(text, chat_id, message_id)
+    except Exception as e:
+        logger.warning(e, exc_info=True)
 
+
+def status_hook(last_status, chat_id, message_id, d):
+    if not chat_id:
+        return
+    try:
+        if d["status"] == "finished" and last_status != "finished":
+            update_message("Extracting MP3...", chat_id, message_id)
+        elif d["status"] == "downloading":
+            update_message(
+                f"Downloading...\n{d['_percent_str']} at {d['_speed_str']} ETA: {d['_eta_str']}",
+                chat_id,
+                message_id,
+            )
+    except Exception as e:
+        logger.warning(e, exc_info=True)
+
+
+def get_opts(chat_id=None, message_id=None):
     last_status = None
-
-    def status_hook(d):
-        nonlocal last_status
-        try:
-            if d["status"] == "finished" and last_status != "finished":
-                update_message(f"Extracting MP3...")
-            elif d["status"] == "downloading":
-                update_message(
-                    f"Downloading...\n{d['_percent_str']} at {d['_speed_str']} ETA: {d['_eta_str']}"
-                )
-        except Exception as e:
-            logger.warning(e, exc_info=True)
-
     opts = DOWNLOAD_OPTIONS.copy()
-    opts["progress_hooks"] = [status_hook]
+    opts["progress_hooks"] = [
+        lambda d: status_hook(last_status, chat_id, message_id, d)
+    ]
     return opts
 
 
-def download_single_url(url, chat_id, message_id):
+def download_single_url(url, chat_id=None, message_id=None, cache_cls=Cache):
     opts = get_opts(chat_id, message_id)
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with Downloader(opts, cache_cls) as ydl:
         result = ydl.extract_info(url, download=True)
         if "entries" in result:
             info = result["entries"][0]
@@ -172,42 +193,30 @@ def download_single_url(url, chat_id, message_id):
         return File(filename, artist, title, url), 0
 
 
-def download_playlist(url, chat_id, message_id):
+def download_playlist(url, chat_id=None, message_id=None, cache_cls=Cache):
     """Download each video in the playlist and return the information as a list of tuples"""
-    with yt_dlp.YoutubeDL({"extract_flat": True}) as flat:
+    with Downloader({"extract_flat": True}, cache_cls) as flat:
         info = flat.extract_info(url, download=False)
         title = info["title"]
         count = info["playlist_count"]
         send_message_blocking(chat_id, f"{title} ({count} tracks)")
     for entry in info["entries"]:
-        result, exit_code = download_single_url(entry["url"], chat_id, message_id)
+        result, exit_code = download_single_url(
+            entry["url"], chat_id, message_id, cache_cls
+        )
         if not exit_code:
             yield result
 
 
-def download_url(url: str, chat_id, message_id):
+def download_url(url: str, chat_id=None, message_id=None, cache_cls=Cache):
     if "playlist" in url:
         return download_playlist(url, chat_id, message_id)
     else:
-        file, exit_code = download_single_url(url, chat_id, message_id)
+        file, exit_code = download_single_url(url, chat_id, message_id, cache_cls)
         if not exit_code:
             return (f for f in [file])
         raise Exception(f"Could not download from URL: {url}")
 
 
 if __name__ == "__main__":
-    channel_id = -1001213653335
-    # m_id = send_message_blocking(channel_id, "TEST")
-    a_id = send_dummy_audio_message(
-        channel_id,
-    )
-    # print(
-    #     [
-    #         f
-    #         for f in download_url(
-    #             "https://music.youtube.com/playlist?list=OLAK5uy_nSimGj4CXHflKeUOh_JjLOnR75Kp6Q064&si=zpprCbpnKTIc1lc6",
-    #             chat_id=channel_id,
-    #             message_id=m_id,
-    #         )
-    #     ]
-    # )
+    print(download_url("https://www.youtube.com/watch?v=bgWUwywrXOM"))
