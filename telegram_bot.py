@@ -1,18 +1,16 @@
 import os
 import re
-import time
 
 import boto3
 import yt_dlp
-from telegram.ext import (Application, ApplicationBuilder, MessageHandler,
-                          filters)
+from telegram.ext import Application, ApplicationBuilder, MessageHandler, filters
 
-SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
+SQS_QUEUE = os.environ["SQS_QUEUE"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 
 session = boto3.Session(profile_name="LambdaFlowFullAccess")
-sns_client = session.client("sns", region_name="eu-west-2")
+sqs_client = session.client("sqs", region_name="eu-west-2")
 dynamodb = session.resource("dynamodb", region_name="eu-west-2")
 table = dynamodb.Table(TABLE_NAME)
 
@@ -48,44 +46,38 @@ async def playlist_info(url, bot, chat_id):
 
 async def message_handler(update, context):
     authenticate(update.message.from_user.id, update.effective_chat.id)
+    queue_url = sqs_client.get_queue_url(QueueName=SQS_QUEUE)["QueueUrl"]
     for url in parse_message_for_urls(update.message.text):
         message = await context.bot.send_message(
             update.effective_chat.id, "Initiating download..."
         )
+        message_attrs = {
+            "chat_id": {
+                "DataType": "String",
+                "StringValue": str(update.effective_chat.id),
+            },
+            "message_id": {
+                "DataType": "String",
+                "StringValue": str(message.id),
+            },
+        }
         try:
             if "playlist" in url:
                 async for playlist_entry_url in playlist_info(
                     url, context.bot, update.effective_chat.id
                 ):
-                    sns_client.publish(
-                        TopicArn=SNS_TOPIC,
-                        Message=playlist_entry_url,
-                        MessageAttributes={
-                            "chat_id": {
-                                "DataType": "String",
-                                "StringValue": str(update.effective_chat.id),
-                            },
-                            "message_id": {
-                                "DataType": "String",
-                                "StringValue": str(message.id),
-                            },
-                        },
+                    sqs_client.send_message(
+                        QueueUrl=queue_url,
+                        DelaySeconds=1,
+                        MessageBody=playlist_entry_url,
+                        MessageAttributes=message_attrs,
                     )
-                    time.sleep(1)
             else:
-                sns_client.publish(
-                    TopicArn=SNS_TOPIC,
-                    Message=url,
-                    MessageAttributes={
-                        "chat_id": {
-                            "DataType": "String",
-                            "StringValue": str(update.effective_chat.id),
-                        },
-                        "message_id": {
-                            "DataType": "String",
-                            "StringValue": str(message.id),
-                        },
-                    },
+                sqs_client.send_message(
+                    QueueUrl=queue_url,
+                    DelaySeconds=1,
+                    MessageBody=url,
+                    MessageAttributes=message_attrs,
                 )
         except Exception as e:
             await context.bot.edit_message_text(
