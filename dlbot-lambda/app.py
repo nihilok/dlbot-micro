@@ -40,8 +40,8 @@ def lambda_handler(event, _):
     # Extract the URL and chat_id/message_id from the SNS message/attributes
     message = None
     try:
-        message = event["Records"][0]["Sns"]["Message"]
-        attributes = event["Records"][0]["Sns"]["MessageAttributes"]
+        message = event["Records"][0]["body"]
+        attributes = event["Records"][0]["messageAttributes"]
         logger.info(f"Message received: {message}")
     except Exception as e:
         logger.error(f"ERROR: {e} ({message or 'no message'})")

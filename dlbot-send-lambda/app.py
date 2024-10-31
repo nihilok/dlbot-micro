@@ -1,6 +1,6 @@
 import asyncio
+import logging
 import os
-import subprocess
 
 import boto3
 from telegram import Bot, InputMediaAudio
@@ -10,19 +10,22 @@ BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 BUCKET_NAME = os.environ["BUCKET_NAME"]
 
 
+logger = logging.getLogger("dlbot-send-lambda")
+
+
 async def edit_message_ignore_errors(bot, text, chat_id, message_id):
     try:
         await bot.edit_message_text(text, chat_id, message_id)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(str(e), exc_info=True)
 
 
 async def delete_message_ignore_errors(chat_id, message_id):
     bot = Bot(token=BOT_TOKEN)
     try:
         await bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(str(e), exc_info=True)
 
 
 async def add_audio(bot: Bot, chat_id, data, message_id):
@@ -44,6 +47,7 @@ async def do_the_thing(s3_key, message_id, placeholder_id):
     try:
         await add_audio(bot, chat_id, data, placeholder_id)
     except Exception as e:
+        logger.error(str(e), exc_info=True)
         await send_error_message(
             chat_id, message_id, f"😭Something went wrong sending audio\n{e}"
         )
@@ -56,7 +60,8 @@ async def send_error_message(chat_id, message_id, error_message):
     bot = Bot(token=BOT_TOKEN)
     try:
         await bot.edit_message_text(error_message, chat_id, message_id)
-    except Exception:
+    except Exception as e:
+        logger.warning(f"Cannot edit placeholder message ({e})", exc_info=True)
         await bot.send_message(chat_id, error_message)
 
 

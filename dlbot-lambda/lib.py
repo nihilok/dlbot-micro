@@ -152,15 +152,24 @@ def update_message(text, chat_id, message_id):
         logger.warning(e, exc_info=True)
 
 
-def status_hook(last_status, chat_id, message_id, d):
+downloading = False
+finished = False
+
+
+def status_hook(chat_id, message_id, d):
+    global downloading, finished
     if not chat_id:
         return
     try:
-        if d["status"] == "finished" and last_status != "finished":
+        if d["status"] == "finished" and not finished:
+            finished = True
+            downloading = False
             update_message("Extracting MP3...", chat_id, message_id)
-        elif d["status"] == "downloading":
+        elif d["status"] == "downloading" and not downloading:
+            downloading = True
+            finished = False
             update_message(
-                f"Downloading...\n{d['_percent_str']} at {d['_speed_str']} ETA: {d['_eta_str']}",
+                f"Downloading...",
                 chat_id,
                 message_id,
             )
@@ -169,11 +178,8 @@ def status_hook(last_status, chat_id, message_id, d):
 
 
 def get_opts(chat_id=None, message_id=None):
-    last_status = None
     opts = DOWNLOAD_OPTIONS.copy()
-    opts["progress_hooks"] = [
-        lambda d: status_hook(last_status, chat_id, message_id, d)
-    ]
+    opts["progress_hooks"] = [lambda d: status_hook(chat_id, message_id, d)]
     return opts
 
 
