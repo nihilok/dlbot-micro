@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import time
+from random import randint
 
 import boto3
 from telegram import Bot, InputMediaAudio
@@ -10,7 +12,7 @@ BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 BUCKET_NAME = os.environ["BUCKET_NAME"]
 
 
-logger = logging.getLogger("dlbot-send-lambda")
+logger = logging.getLogger(__name__)
 
 
 async def edit_message_ignore_errors(bot, text, chat_id, message_id):
@@ -29,29 +31,31 @@ async def delete_message_ignore_errors(chat_id, message_id):
 
 
 async def add_audio(bot: Bot, chat_id, data, message_id):
-    try:
-        tg_audio = InputMediaAudio(data)
-        await bot.edit_message_media(tg_audio, chat_id, message_id)
-    except TimedOut:
-        # Was most likely successful
-        pass
+    tg_audio = InputMediaAudio(data)
+    await bot.edit_message_media(tg_audio, chat_id, message_id)
 
 
-async def do_the_thing(s3_key, message_id, placeholder_id):
-    bot = Bot(token=BOT_TOKEN)
-    chat_id, *_ = s3_key.split("/")
-    await edit_message_ignore_errors(bot, "Sending audio...", chat_id, message_id)
-    s3 = boto3.client("s3")
-    obj = s3.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-    data = obj["Body"].read()
+MAX_RETRIES = 5
+
+
+async def do_the_thing(s3_key, message_id, placeholder_id, retry=0):
+    await asyncio.sleep(randint(1, 5))
     try:
+        bot = Bot(token=BOT_TOKEN)
+        chat_id, *_ = s3_key.split("/")
+        await edit_message_ignore_errors(bot, "Sending audio...", chat_id, message_id)
+        s3 = boto3.client("s3")
+        obj = s3.get_object(Bucket=BUCKET_NAME, Key=s3_key)
+        data = obj["Body"].read()
         await add_audio(bot, chat_id, data, placeholder_id)
     except Exception as e:
-        logger.error(str(e), exc_info=True)
-        await send_error_message(
-            chat_id, message_id, f"😭Something went wrong sending audio\n{e}"
-        )
-        return
+        if retry < MAX_RETRIES:
+            logger.warning(f"Retrying ({retry + 1}/{MAX_RETRIES}) (ERROR: {e})")
+            return await do_the_thing(
+                s3_key, message_id, placeholder_id, retry=retry + 1
+            )
+        raise e
+
     s3.delete_object(Bucket=BUCKET_NAME, Key=s3_key)
     await delete_message_ignore_errors(chat_id, message_id)
 

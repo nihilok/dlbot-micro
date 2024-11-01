@@ -1,5 +1,6 @@
 import os
 import re
+import time
 
 import boto3
 import yt_dlp
@@ -39,7 +40,8 @@ async def playlist_info(url, bot, chat_id):
         info = flat.extract_info(url, download=False)
         title = info["title"]
         count = info["playlist_count"]
-        await bot.send_message(chat_id, f"{title} ({count} tracks)")
+        message = await bot.send_message(chat_id, f"{title} ({count} tracks)")
+        print(message.id)
         for entry in info["entries"]:
             yield entry["url"]
 
@@ -61,6 +63,7 @@ async def message_handler(update, context):
                 "StringValue": str(message.id),
             },
         }
+        message_group_id = f"{update.effective_chat.id}-{url}"
         try:
             if "playlist" in url:
                 async for playlist_entry_url in playlist_info(
@@ -68,16 +71,17 @@ async def message_handler(update, context):
                 ):
                     sqs_client.send_message(
                         QueueUrl=queue_url,
-                        DelaySeconds=1,
                         MessageBody=playlist_entry_url,
                         MessageAttributes=message_attrs,
+                        MessageGroupId=message_group_id,
                     )
+                    time.sleep(1)
             else:
                 sqs_client.send_message(
                     QueueUrl=queue_url,
-                    DelaySeconds=1,
                     MessageBody=url,
                     MessageAttributes=message_attrs,
+                    MessageGroupId=message_group_id,
                 )
         except Exception as e:
             await context.bot.edit_message_text(
