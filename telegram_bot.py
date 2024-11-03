@@ -141,7 +141,7 @@ async def queue_single_url(
     sqs_client.send_message(
         QueueUrl=queue_url,
         MessageBody=audio_url,
-        MessageAttributes=message_attrs,
+        MessageAttributes=current_message,
         MessageGroupId=message_group_id,
         MessageDeduplicationId=message_deduplication_id,
     )
