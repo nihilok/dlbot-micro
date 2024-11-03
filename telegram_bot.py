@@ -17,7 +17,7 @@ from telegram.ext import (
 )
 
 SQS_QUEUE = os.environ["SQS_QUEUE"]
-USE_SNS = os.environ.get("USE_SNS", "false").lower() == "true"
+USE_SQS = os.environ.get("USE_SQS", "false").lower() == "true"
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
@@ -145,7 +145,7 @@ async def queue_single_url(
         "DataType": "String",
         "StringValue": str(placeholder_audio_id),
     }
-    if USE_SNS:
+    if not USE_SQS:
         sns_client.publish(
             TopicArn=SNS_TOPIC, Message=audio_url, MessageAttributes=current_message
         )
