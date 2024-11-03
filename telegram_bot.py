@@ -2,7 +2,6 @@ import asyncio
 import io
 import os
 import re
-import time
 import wave
 from uuid import uuid4
 
@@ -18,11 +17,14 @@ from telegram.ext import (
 )
 
 SQS_QUEUE = os.environ["SQS_QUEUE"]
+USE_SNS = os.environ.get("USE_SNS", "false").lower() == "true"
+SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 
 session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sqs_client = session.client("sqs", region_name="eu-west-2")
+sns_client = session.client("sns", region_name="eu-west-2")
 dynamodb = session.resource("dynamodb", region_name="eu-west-2")
 table = dynamodb.Table(TABLE_NAME)
 
@@ -137,14 +139,19 @@ async def queue_single_url(
         "DataType": "String",
         "StringValue": str(placeholder_audio_id),
     }
-    message_deduplication_id = str(uuid4())
-    sqs_client.send_message(
-        QueueUrl=queue_url,
-        MessageBody=audio_url,
-        MessageAttributes=current_message,
-        MessageGroupId=message_group_id,
-        MessageDeduplicationId=message_deduplication_id,
-    )
+    if USE_SNS:
+        sns_client.publish(
+            TopicArn=SNS_TOPIC, Message=audio_url, MessageAttributes=message_attrs
+        )
+    else:
+        message_deduplication_id = str(uuid4())
+        sqs_client.send_message(
+            QueueUrl=queue_url,
+            MessageBody=audio_url,
+            MessageAttributes=current_message,
+            MessageGroupId=message_group_id,
+            MessageDeduplicationId=message_deduplication_id,
+        )
 
 
 def build_bot(token: str) -> Application:

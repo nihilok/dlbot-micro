@@ -16,6 +16,7 @@ from yt_dlp.cache import Cache
 from yt_downloader_cache import S3PersistentCache
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 
 
