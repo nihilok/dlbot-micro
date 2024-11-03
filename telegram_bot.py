@@ -95,6 +95,12 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
     authenticate(update.message.from_user.id, update.effective_chat.id)
     queue_url = sqs_client.get_queue_url(QueueName=SQS_QUEUE)["QueueUrl"]
     for url in parse_message_for_urls(update.message.text):
+        if "spotify" in url:
+            await context.bot.send_message(
+                update.effective_chat.id,
+                "Sorry, I can't download from Spotify 😢",
+            )
+            continue
         message_attrs = {
             "chat_id": {
                 "DataType": "String",
