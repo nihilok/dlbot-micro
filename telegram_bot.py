@@ -141,7 +141,7 @@ async def queue_single_url(
     }
     if USE_SNS:
         sns_client.publish(
-            TopicArn=SNS_TOPIC, Message=audio_url, MessageAttributes=message_attrs
+            TopicArn=SNS_TOPIC, Message=audio_url, MessageAttributes=current_message
         )
     else:
         message_deduplication_id = str(uuid4())
