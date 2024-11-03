@@ -1,13 +1,14 @@
+import asyncio
 import logging
 import os
 
-from boto3_clients import s3_client, sns_client
+from telegram import Bot
+
+from boto3_clients import s3_client
 from constants import S3_BUCKET
 from lib import (
-    delete_message_blocking,
     download_url,
-    send_dummy_audio_message,
-    send_message_blocking,
+    update_placeholder_audio_message,
 )
 from yt_downloader_cache import S3PersistentCache
 
@@ -38,64 +39,58 @@ def get_message_attrs(chat_id, message_id, placeholder_id=None, url=None):
 
 def lambda_handler(event, _):
     # Extract the URL and chat_id/message_id from the SNS message/attributes
+    loop = asyncio.new_event_loop()
+    bot = Bot(token=BOT_TOKEN)
+    exceptions_raised = False
+
     for queued_message in event["Records"]:
-        message = queued_message["body"]
+        video_url = queued_message["body"]
         attributes = queued_message["messageAttributes"]
         chat_id = int(attributes["chat_id"]["stringValue"])
-        message_id = int(attributes["message_id"]["stringValue"])
-        delete_message_blocking(chat_id, message_id)
-        message_id = send_message_blocking(chat_id, "Downloading...")
-        placeholder_message_id = send_dummy_audio_message(chat_id)
+        placeholder_message_id = int(attributes["placeholder_audio_id"]["stringValue"])
 
         # Check whether file(s) already exist, it's possible the send operation failed,
-        # but the download was completed successfully.
-        prefix = f"{chat_id}/{hash(message)}/"
+        # but the download was completed successfully; or we just still have a cached version.
+        prefix = f"downloads/{hash(video_url)}/"
         existing = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
+        tasks = []
         if "Contents" not in existing:
             # Download file(s) using yt-dlp
-            url = message
             for file in download_url(
-                url,
+                video_url,
                 chat_id,
-                message_id,
                 cache_cls=S3PersistentCache,
             ):  # Yields a single file unless URL is for a playlist
                 file_size = os.path.getsize(file.filename)
                 if file_size >= MAX_FILE_SIZE:
-                    sns_client.publish(
-                        TopicArn=SNS_TOPIC,
-                        Message="File size too large",
-                        MessageAttributes=get_message_attrs(
-                            chat_id,
-                            message_id,
-                            placeholder_id=placeholder_message_id,
-                            url=url,
-                        ),
-                    )
                     continue
 
                 # Save the content to S3
                 s3_key = file.filename.replace("/tmp/", prefix)
 
                 with open(file.filename, "rb") as f:
-                    s3_client.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=f.read())
-
-                # Notify that the download is complete
-                sns_client.publish(
-                    TopicArn=SNS_TOPIC,
-                    Message=s3_key,
-                    MessageAttributes=get_message_attrs(
-                        chat_id, message_id, placeholder_message_id
-                    ),
-                )
+                    audio_bytes = f.read()
+                    s3_client.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=audio_bytes)
+                    task = loop.create_task(
+                        update_placeholder_audio_message(
+                            chat_id, placeholder_message_id, audio_bytes, bot
+                        )
+                    )
+                    tasks.append(task)
         else:
             for obj in existing["Contents"]:
-                # Notify that the download is complete
-                sns_client.publish(
-                    TopicArn=SNS_TOPIC,
-                    Message=obj["Key"],
-                    MessageAttributes=get_message_attrs(
-                        chat_id, message_id, placeholder_message_id
-                    ),
+                audio_bytes = obj["Body"].read()
+                task = loop.create_task(
+                    update_placeholder_audio_message(
+                        chat_id, placeholder_message_id, audio_bytes, bot
+                    )
                 )
-        return {"statusCode": 200}
+                tasks.append(task)
+
+            results = asyncio.gather(*tasks, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    logger.error(result, exc_info=True)
+                    exceptions_raised = True
+
+        return {"statusCode": 200} if not exceptions_raised else {"statusCode": 400}

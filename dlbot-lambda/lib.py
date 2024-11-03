@@ -1,13 +1,16 @@
+import asyncio
 import io
 import logging
 import os
 import wave
+from random import randint
 from typing import NamedTuple, Type
 
 import boto3
 import requests
 import yt_dlp
 from mutagen.easyid3 import EasyID3
+from telegram import Bot, InputMediaAudio
 from yt_dlp.cache import Cache
 
 from yt_downloader_cache import S3PersistentCache
@@ -222,6 +225,27 @@ def download_url(url: str, chat_id=None, message_id=None, cache_cls=Cache):
         if not exit_code:
             return (f for f in [file])
         raise Exception(f"Could not download from URL: {url}")
+
+
+MAX_AUDIO_UPDATE_RETRIES = 5
+
+
+async def update_placeholder_audio_message(
+    chat_id, message_id, audio_bytes, bot: Bot, retry=0
+):
+    tg_audio = InputMediaAudio(audio_bytes)
+    try:
+        await bot.edit_message_media(tg_audio, chat_id, message_id)
+    except Exception as e:
+        if retry < MAX_AUDIO_UPDATE_RETRIES:
+            await asyncio.sleep(randint(1, 5))
+            logger.warning(
+                f"Retrying ({retry + 1}/{MAX_AUDIO_UPDATE_RETRIES}) (ERROR: {e})"
+            )
+            return await update_placeholder_audio_message(
+                chat_id, message_id, audio_bytes, bot, retry=retry + 1
+            )
+        raise e
 
 
 if __name__ == "__main__":
