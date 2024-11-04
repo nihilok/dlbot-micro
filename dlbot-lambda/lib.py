@@ -2,30 +2,22 @@ import asyncio
 import io
 import logging
 import os
-import wave
 from random import randint
 from typing import NamedTuple, Type
 
-import boto3
 import requests
 import yt_dlp
 from mutagen.easyid3 import EasyID3
 from telegram import Bot, InputMediaAudio
+from telegram.error import RetryAfter
 from yt_dlp.cache import Cache
 
 from yt_downloader_cache import S3PersistentCache
+from constants import MAX_AUDIO_UPDATE_RETRIES
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 BOT_TOKEN = os.environ["BOT_TOKEN"]
-
-
-def update_message_blocking(new_text, chat_id, message_id) -> int:
-    r = requests.get(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/editMessageText?chat_id={chat_id}&message_id={message_id}&text={new_text}"
-    )
-    if r.ok:
-        return r.json()["result"]["message_id"]
 
 
 def send_message_blocking(chat_id, text) -> int:
@@ -34,56 +26,6 @@ def send_message_blocking(chat_id, text) -> int:
     )
     if r.ok:
         return r.json()["result"]["message_id"]
-
-
-def create_dummy_audio():
-    # Parameters for the dummy audio
-    nchannels = 1
-    sampwidth = 2
-    framerate = 44100
-    nframes = framerate  # 1 second of audio
-    comptype = "NONE"
-    compname = "not compressed"
-
-    # Create a buffer to hold the audio data
-    buffer = io.BytesIO()
-
-    # Create a wave file
-    with wave.open(buffer, "wb") as wf:
-        wf.setnchannels(nchannels)
-        wf.setsampwidth(sampwidth)
-        wf.setframerate(framerate)
-        wf.setnframes(nframes)
-        wf.setcomptype(comptype, compname)
-        # Generate silent audio (all zeros)
-        wf.writeframes(b"\x00" * nframes * sampwidth * nchannels)
-
-    # Move the buffer position to the beginning
-    buffer.seek(0)
-    return buffer
-
-
-def send_dummy_audio_message(chat_id) -> int:
-    audio = create_dummy_audio()
-    r = requests.get(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/sendAudio?chat_id={chat_id}",
-        files={
-            "audio": audio.read(),
-            "title": "placeholder audio...",
-            "caption": "This is a placeholder...",
-        },
-    )
-    if r.ok:
-        print(r.json()["result"]["message_id"])
-        return r.json()["result"]["message_id"]
-    else:
-        print("FAILED", r.status_code, r.text)
-
-
-def delete_message_blocking(chat_id, message_id):
-    requests.get(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage?chat_id={chat_id}&message_id={message_id}"
-    )
 
 
 DOWNLOAD_OPTIONS = {
@@ -108,9 +50,6 @@ class File(NamedTuple):
     url: str
 
 
-s3_client = boto3.client("s3")
-
-
 class Downloader(yt_dlp.YoutubeDL):
     def __init__(self, options, cache_cls: Type[Cache] = S3PersistentCache):
         options["username"] = "oauth2"
@@ -119,7 +58,7 @@ class Downloader(yt_dlp.YoutubeDL):
         self.cache = cache_cls(self)
 
 
-def get_metadata_local(result):
+def parse_metadata(result):
     artist = result.get("artist", None)
     if artist:
         artists = artist.split(", ")
@@ -147,55 +86,20 @@ def set_tags(filepath, title, artist=None):
         logger.error(f"Error settings tags: {e}")
 
 
-def update_message(text, chat_id, message_id):
-    if not chat_id:
-        return
-    try:
-        update_message_blocking(text, chat_id, message_id)
-    except Exception as e:
-        logger.warning(e, exc_info=True)
-
-
-downloading = False
-finished = False
-
-
-def status_hook(chat_id, message_id, d):
-    global downloading, finished
-    if not chat_id:
-        return
-    try:
-        if d["status"] == "finished" and not finished:
-            finished = True
-            downloading = False
-            update_message("Extracting MP3...", chat_id, message_id)
-        elif d["status"] == "downloading" and not downloading:
-            downloading = True
-            finished = False
-            update_message(
-                f"Downloading...",
-                chat_id,
-                message_id,
-            )
-    except Exception as e:
-        logger.warning(e, exc_info=True)
-
-
-def get_opts(chat_id=None, message_id=None):
+def get_opts():
     opts = DOWNLOAD_OPTIONS.copy()
-    opts["progress_hooks"] = [lambda d: status_hook(chat_id, message_id, d)]
     return opts
 
 
-def download_single_url(url, chat_id=None, message_id=None, cache_cls=Cache):
-    opts = get_opts(chat_id, message_id)
+def download_single_url(url, cache_cls=Cache):
+    opts = get_opts()
     with Downloader(opts, cache_cls) as ydl:
         result = ydl.extract_info(url, download=True)
         if "entries" in result:
             info = result["entries"][0]
         else:
             info = result
-        artist, title = get_metadata_local(info)
+        artist, title = parse_metadata(info)
         filename = f"/tmp/{info['id']}.mp3"
         if not os.path.exists(filename):
             raise FileNotFoundError
@@ -203,7 +107,7 @@ def download_single_url(url, chat_id=None, message_id=None, cache_cls=Cache):
         return File(filename, artist, title, url), 0
 
 
-def download_playlist(url, chat_id=None, message_id=None, cache_cls=Cache):
+def download_playlist(url, chat_id=None, cache_cls=Cache):
     """Download each video in the playlist and return the information as a list of tuples"""
     with Downloader({"extract_flat": True}, cache_cls) as flat:
         info = flat.extract_info(url, download=False)
@@ -211,24 +115,19 @@ def download_playlist(url, chat_id=None, message_id=None, cache_cls=Cache):
         count = info["playlist_count"]
         send_message_blocking(chat_id, f"{title} ({count} tracks)")
     for entry in info["entries"]:
-        result, exit_code = download_single_url(
-            entry["url"], chat_id, message_id, cache_cls
-        )
+        result, exit_code = download_single_url(entry["url"], cache_cls)
         if not exit_code:
             yield result
 
 
-def download_url(url: str, chat_id=None, message_id=None, cache_cls=Cache):
+def download_url(url: str, chat_id=None, cache_cls=Cache):
     if "playlist" in url:
-        return download_playlist(url, chat_id, message_id)
+        return download_playlist(url, chat_id, cache_cls)
     else:
-        file, exit_code = download_single_url(url, chat_id, message_id, cache_cls)
+        file, exit_code = download_single_url(url, cache_cls)
         if not exit_code:
             return (f for f in [file])
         raise Exception(f"Could not download from URL: {url}")
-
-
-MAX_AUDIO_UPDATE_RETRIES = 5
 
 
 async def update_placeholder_audio_message(
@@ -238,14 +137,20 @@ async def update_placeholder_audio_message(
     try:
         await bot.edit_message_media(tg_audio, chat_id, message_id)
     except Exception as e:
+        if isinstance(e, RetryAfter):
+            sleep_time = e.retry_after
+        else:
+            sleep_time = randint(3, 10)
+
         if retry < MAX_AUDIO_UPDATE_RETRIES:
-            await asyncio.sleep(randint(1, 5))
+            await asyncio.sleep(sleep_time)
             logger.warning(
                 f"Retrying ({retry + 1}/{MAX_AUDIO_UPDATE_RETRIES}) (ERROR: {e})"
             )
             return await update_placeholder_audio_message(
                 chat_id, message_id, audio_bytes, bot, retry=retry + 1
             )
+
         raise e
 
 

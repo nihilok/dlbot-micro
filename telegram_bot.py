@@ -3,11 +3,13 @@ import io
 import os
 import re
 import wave
+from random import randint
 from uuid import uuid4
 
 import boto3
 import yt_dlp
 from telegram.constants import ParseMode
+from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -21,6 +23,7 @@ USE_SQS = os.environ.get("USE_SQS", "false").lower() == "true"
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
+MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE = 5
 
 session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sqs_client = session.client("sqs", region_name="eu-west-2")
@@ -59,10 +62,22 @@ def create_dummy_audio():
     return buffer
 
 
-async def send_dummy_audio_message(chat_id, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def send_dummy_audio_message(
+    chat_id, context: ContextTypes.DEFAULT_TYPE, retry=0
+) -> int:
     audio = create_dummy_audio()
-    message = await context.bot.send_audio(chat_id, audio, title="Downloading...")
-    return message.id
+    try:
+        message = await context.bot.send_audio(chat_id, audio, title="Downloading...")
+        return message.id
+
+    except Exception as e:
+        if isinstance(e, RetryAfter):
+            sleep_time = e.retry_after
+        else:
+            sleep_time = randint(3, 10)
+        if retry < MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE:
+            await asyncio.sleep(sleep_time)
+            return await send_dummy_audio_message(chat_id, context, retry=retry + 1)
 
 
 def authenticate(user_id, chat_id):
@@ -121,7 +136,7 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
                         playlist_entry_url,
                         queue_url,
                     )
-                    await asyncio.sleep(0.5)
+                    await asyncio.sleep(1)
             else:
                 await queue_single_url(
                     update, context, message_attrs, message_group_id, url, queue_url

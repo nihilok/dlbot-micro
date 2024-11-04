@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 import os
 
@@ -72,6 +71,9 @@ def lambda_handler(event, _):
             ):  # Yields a single file unless URL is for a playlist
                 file_size = os.path.getsize(file.filename)
                 if file_size >= MAX_FILE_SIZE:
+                    loop.run_until_complete(
+                        bot.send_message(chat_id, f"File too large: {video_url}")
+                    )
                     continue
 
                 # Save the content to S3
