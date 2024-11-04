@@ -106,6 +106,32 @@ async def playlist_info(url, bot, chat_id):
             yield entry["url"]
 
 
+async def queue_single_url(
+    update, context, message_attrs, message_group_id, audio_url, queue_url
+):
+    placeholder_audio_id = await send_dummy_audio_message(
+        update.effective_chat.id, context
+    )
+    current_message = message_attrs.copy()
+    current_message["placeholder_audio_id"] = {
+        "DataType": "String",
+        "StringValue": str(placeholder_audio_id),
+    }
+    if not USE_SQS:
+        sns_client.publish(
+            TopicArn=SNS_TOPIC, Message=audio_url, MessageAttributes=current_message
+        )
+    else:
+        message_deduplication_id = str(uuid4())
+        sqs_client.send_message(
+            QueueUrl=queue_url,
+            MessageBody=audio_url,
+            MessageAttributes=current_message,
+            MessageGroupId=message_group_id,
+            MessageDeduplicationId=message_deduplication_id,
+        )
+
+
 async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
     authenticate(update.message.from_user.id, update.effective_chat.id)
     queue_url = sqs_client.get_queue_url(QueueName=SQS_QUEUE)["QueueUrl"]
@@ -147,32 +173,6 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
                 f"*Something went wrong* 😢\n{url}\n{e}",
                 parse_mode=ParseMode.MARKDOWN_V2,
             )
-
-
-async def queue_single_url(
-    update, context, message_attrs, message_group_id, audio_url, queue_url
-):
-    placeholder_audio_id = await send_dummy_audio_message(
-        update.effective_chat.id, context
-    )
-    current_message = message_attrs.copy()
-    current_message["placeholder_audio_id"] = {
-        "DataType": "String",
-        "StringValue": str(placeholder_audio_id),
-    }
-    if not USE_SQS:
-        sns_client.publish(
-            TopicArn=SNS_TOPIC, Message=audio_url, MessageAttributes=current_message
-        )
-    else:
-        message_deduplication_id = str(uuid4())
-        sqs_client.send_message(
-            QueueUrl=queue_url,
-            MessageBody=audio_url,
-            MessageAttributes=current_message,
-            MessageGroupId=message_group_id,
-            MessageDeduplicationId=message_deduplication_id,
-        )
 
 
 def build_bot(token: str) -> Application:
