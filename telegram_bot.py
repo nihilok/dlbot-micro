@@ -10,7 +10,7 @@ import aiohttp
 
 import boto3
 import yt_dlp
-from telegram import helpers
+from telegram import helpers, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import RetryAfter, TimedOut
 from telegram.ext import (
     Application,
@@ -18,24 +18,22 @@ from telegram.ext import (
     MessageHandler,
     filters,
     ContextTypes,
+    CommandHandler,
 )
 
 SQS_QUEUE = os.environ["SQS_QUEUE"]
 USE_SQS = os.environ.get("USE_SQS", "false").lower() == "true"
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
-TABLE_NAME = os.environ["DDB_TABLE_NAME"]
+MEMBERS_CHANNEL_ID = os.environ["MEMBERS_CHANNEL_ID"]
+MEMBERS_CHANNEL_LINK = os.environ["MEMBERS_CHANNEL_LINK"]
+
 MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE = 5
 
 session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sqs_client = session.client("sqs", region_name="eu-west-2")
 sns_client = session.client("sns", region_name="eu-west-2")
 dynamodb = session.resource("dynamodb", region_name="eu-west-2")
-table = dynamodb.Table(TABLE_NAME)
-
-
-class NotAuthenticated(ValueError):
-    pass
 
 
 async def download_image(url: str) -> bytes:
@@ -92,13 +90,13 @@ async def send_dummy_audio_message(
         raise e
 
 
-def authenticate(user_id, chat_id):
-    chat_response = table.get_item(Key={"id": chat_id})
-    if "Item" not in chat_response:
-        user_response = table.get_item(Key={"id": user_id})
-        if "Item" not in user_response:
-            raise NotAuthenticated
-    return True
+async def check_membership(update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = MEMBERS_CHANNEL_ID
+    user_id = update.effective_user.id
+    chat_member = await context.bot.get_chat_member(chat_id, user_id)
+    member = chat_member.status in ["creator", "administrator", "member"]
+    admin = chat_member.status in ["creator", "administrator"]
+    return member, admin
 
 
 def parse_message_for_urls(message):
@@ -158,7 +156,37 @@ async def queue_single_url(
 
 
 async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
-    authenticate(update.message.from_user.id, update.effective_chat.id)
+    member, admin = await check_membership(update, context)
+    is_own_chat = update.effective_chat.id == update.effective_user.id
+    if not admin and not is_own_chat:
+        bot_username = (await context.bot.get_me()).username
+        await update.message.reply_text(
+            f"Sorry, {update.effective_user.first_name}, you are not permitted use this bot in groups.\n@{bot_username} <- click here to open a private chat.",
+        )
+        return
+
+    if not member:
+        join_button = InlineKeyboardButton(
+            text="Join Channel", url=MEMBERS_CHANNEL_LINK
+        )
+        keyboard = InlineKeyboardMarkup([[join_button]])
+        await update.message.reply_text(
+            "You must be a member to use this bot.\Click the button below to join the members channel.",
+            reply_markup=keyboard,
+        )
+        return
+
+    if update.message.text == "/start":
+        message_prefix = f"You're already {'an admin' if admin else 'a member'}! "
+        message = "Send me a link and I'll send you the MP3!"
+        if is_own_chat:
+            message = message_prefix + message
+        await context.bot.send_message(
+            update.effective_chat.id,
+            message,
+        )
+        return
+
     queue_url = sqs_client.get_queue_url(QueueName=SQS_QUEUE)["QueueUrl"]
     for url in parse_message_for_urls(update.message.text):
         if "spotify" in url:
@@ -202,7 +230,9 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
 
 def build_bot(token: str) -> Application:
     application = ApplicationBuilder().token(token).build()
-    application.add_handler(MessageHandler(filters.TEXT, message_handler))
+    url_pattern = re.compile(r"https?://\S+")
+    application.add_handler(CommandHandler("start", message_handler))
+    application.add_handler(MessageHandler(filters.Regex(url_pattern), message_handler))
     return application
 
 
