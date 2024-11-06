@@ -11,7 +11,7 @@ import aiohttp
 import boto3
 import yt_dlp
 from telegram import helpers
-from telegram.error import RetryAfter
+from telegram.error import RetryAfter, TimedOut
 from telegram.ext import (
     Application,
     ApplicationBuilder,
@@ -79,6 +79,8 @@ async def send_dummy_audio_message(
         message = await context.bot.send_audio(chat_id, audio, title="Downloading...")
         return message.id
 
+    except TimedOut:
+        pass
     except Exception as e:
         if isinstance(e, RetryAfter):
             sleep_time = e.retry_after
@@ -87,6 +89,7 @@ async def send_dummy_audio_message(
         if retry < MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE:
             await asyncio.sleep(sleep_time)
             return await send_dummy_audio_message(chat_id, context, retry=retry + 1)
+        raise e
 
 
 def authenticate(user_id, chat_id):
