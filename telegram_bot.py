@@ -187,7 +187,7 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
                         playlist_entry_url,
                         queue_url,
                     )
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(2)
             else:
                 await queue_single_url(
                     update, context, message_attrs, message_group_id, url, queue_url
