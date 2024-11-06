@@ -6,9 +6,11 @@ import wave
 from random import randint
 from uuid import uuid4
 
+import aiohttp
+
 import boto3
 import yt_dlp
-from telegram.constants import ParseMode
+from telegram import helpers
 from telegram.error import RetryAfter
 from telegram.ext import (
     Application,
@@ -21,7 +23,7 @@ from telegram.ext import (
 SQS_QUEUE = os.environ["SQS_QUEUE"]
 USE_SQS = os.environ.get("USE_SQS", "false").lower() == "true"
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
-BOT_TOKEN = os.environ["DLBOT_TOKEN"]
+BOT_TOKEN = os.environ["DLBOT_TOKEN_DEBUG"]
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE = 5
 
@@ -34,6 +36,13 @@ table = dynamodb.Table(TABLE_NAME)
 
 class NotAuthenticated(ValueError):
     pass
+
+
+async def download_image(url: str) -> bytes:
+    async with aiohttp.ClientSession() as request:
+        async with request.get(url) as response:
+            if response.status == 200:
+                return await response.read()
 
 
 def create_dummy_audio():
@@ -100,8 +109,21 @@ async def playlist_info(url, bot, chat_id):
         info = flat.extract_info(url, download=False)
         title = info["title"]
         count = info["playlist_count"]
-        message = await bot.send_message(chat_id, f"{title} ({count} tracks)")
-        print(message.id)
+        release_year = info.get("release_year")
+        message = helpers.escape_markdown(
+            f"{title} ({count} tracks){' (' + release_year + ')' if release_year else ''}"
+        )
+        try:
+            if info.get("thumbnails"):
+                try:
+                    image_url = info["thumbnails"][-2]["url"]
+                except IndexError:
+                    image_url = info["thumbnails"][0]["url"]
+                image_content = await download_image(image_url)
+                await bot.send_photo(chat_id, image_content, caption=message)
+        except Exception:
+            await bot.send_message(chat_id, message)
+
         for entry in info["entries"]:
             yield entry["url"]
 
@@ -168,10 +190,10 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
                     update, context, message_attrs, message_group_id, url, queue_url
                 )
         except Exception as e:
+            error_message = helpers.escape_markdown(str(e))
             await context.bot.send_message(
                 update.effective_chat.id,
-                f"*Something went wrong* 😢\n{url}\n{e}",
-                parse_mode=ParseMode.MARKDOWN_V2,
+                f"Something went wrong! 😢\n{url}\n{error_message}",
             )
 
 
