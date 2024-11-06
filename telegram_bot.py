@@ -23,7 +23,7 @@ from telegram.ext import (
 SQS_QUEUE = os.environ["SQS_QUEUE"]
 USE_SQS = os.environ.get("USE_SQS", "false").lower() == "true"
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
-BOT_TOKEN = os.environ["DLBOT_TOKEN_DEBUG"]
+BOT_TOKEN = os.environ["DLBOT_TOKEN"]
 TABLE_NAME = os.environ["DDB_TABLE_NAME"]
 MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE = 5
 
