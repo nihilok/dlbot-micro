@@ -183,6 +183,9 @@ async def member_join_handler(update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = new_chat_member.user.id
     data = get_init_message_data(user_id)
+    if not data:
+        return
+
     message_id = int(data["message_id"])
     success_button = InlineKeyboardButton(
         text="Channel Joined ✅", url=MEMBERS_CHANNEL_LINK
@@ -193,6 +196,7 @@ async def member_join_handler(update, context: ContextTypes.DEFAULT_TYPE):
         message_id=message_id,
         reply_markup=InlineKeyboardMarkup([[success_button]]),
     )
+    table.delete_item(Key={"user_id": user_id})
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
