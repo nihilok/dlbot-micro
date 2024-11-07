@@ -191,7 +191,7 @@ async def member_join_handler(update, context: ContextTypes.DEFAULT_TYPE):
         text="Channel Joined ✅", url=MEMBERS_CHANNEL_LINK
     )
     await context.bot.edit_message_text(
-        text=f"Congratulations! 🎉 You are now a member!\nSend me a link to a YouTube video/playlist,\nand I'll send you the MP3(s)! 🎵🎧",
+        text=f"Congratulations! 🎉 You are now a member! Send me a link to a YouTube video/playlist, and I'll send you the MP3(s)! 🎵🎧",
         chat_id=user_id,
         message_id=message_id,
         reply_markup=InlineKeyboardMarkup([[success_button]]),
@@ -215,7 +215,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         keyboard = InlineKeyboardMarkup([[join_button]])
         message = await update.message.reply_text(
-            "You must be a member to use this bot.\nClick the button below to join the members channel.",
+            "You must be a member to use this bot. Click the button to join the members channel. (By joining the channel you will be automatically allowed to use the bot.)",
             reply_markup=keyboard,
         )
         save_init_message_data(update.effective_user.id, message.message_id)
@@ -269,7 +269,7 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             error_message = helpers.escape_markdown(str(e))
             await context.bot.send_message(
                 update.effective_chat.id,
-                f"Something went wrong! 😢\n{url}\n{error_message}",
+                f"Something went wrong! 😢\n\n{url}\n\n{error_message}",
             )
 
 
