@@ -188,7 +188,7 @@ async def member_join_handler(update, context: ContextTypes.DEFAULT_TYPE):
         text="Channel Joined ✅", url=MEMBERS_CHANNEL_LINK
     )
     await context.bot.edit_message_text(
-        text=f"Congratulations! You are now a member! 🎉\nSend me a link to a YouTube video/playlist,\nand I'll send you the MP3(s)!",
+        text=f"Congratulations! You are now a member! 🎉\nSend me a link to a YouTube video/playlist,\nand I'll send you the MP3(s)! 🎵🎧",
         chat_id=user_id,
         message_id=message_id,
         reply_markup=InlineKeyboardMarkup([[success_button]]),
