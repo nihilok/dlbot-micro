@@ -1,5 +1,6 @@
 import asyncio
 import io
+import logging
 import os
 import re
 import wave
@@ -10,7 +11,7 @@ import aiohttp
 
 import boto3
 import yt_dlp
-from telegram import helpers, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import helpers, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.error import RetryAfter, TimedOut
 from telegram.ext import (
     Application,
@@ -19,14 +20,18 @@ from telegram.ext import (
     filters,
     ContextTypes,
     CommandHandler,
+    ChatMemberHandler,
 )
 
 SQS_QUEUE = os.environ["SQS_QUEUE"]
 USE_SQS = os.environ.get("USE_SQS", "false").lower() == "true"
 SNS_TOPIC = os.environ["SNS_POST_TOPIC"]
 BOT_TOKEN = os.environ["DLBOT_TOKEN"]
+DEBUG_BOT_TOKEN = os.environ.get("DLBOT_TOKEN_DEBUG")
+DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 MEMBERS_CHANNEL_ID = os.environ["MEMBERS_CHANNEL_ID"]
 MEMBERS_CHANNEL_LINK = os.environ["MEMBERS_CHANNEL_LINK"]
+NEW_USERS_TABLE = os.environ["NEW_USERS_TABLE"]
 
 MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE = 5
 
@@ -34,6 +39,14 @@ session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sqs_client = session.client("sqs", region_name="eu-west-2")
 sns_client = session.client("sns", region_name="eu-west-2")
 dynamodb = session.resource("dynamodb", region_name="eu-west-2")
+table = dynamodb.Table(NEW_USERS_TABLE)
+
+if DEBUG:
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+    logger = logging.getLogger(__name__)
 
 
 async def download_image(url: str) -> bytes:
@@ -129,6 +142,15 @@ async def playlist_info(url, bot, chat_id):
             yield entry["url"]
 
 
+def save_init_message_data(user_id, message_id):
+    table.put_item(Item={"user_id": user_id, "message_id": message_id})
+
+
+def get_init_message_data(user_id):
+    row = table.get_item(Key={"user_id": user_id})
+    return row["Item"] if "Item" in row else None
+
+
 async def queue_single_url(
     update, context, message_attrs, message_group_id, audio_url, queue_url
 ):
@@ -155,7 +177,25 @@ async def queue_single_url(
         )
 
 
-async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
+async def member_join_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    new_chat_member = update.chat_member.new_chat_member
+    if new_chat_member.status != new_chat_member.MEMBER:
+        return
+    user_id = new_chat_member.user.id
+    data = get_init_message_data(user_id)
+    message_id = int(data["message_id"])
+    success_button = InlineKeyboardButton(
+        text="Channel Joined ✅", url=MEMBERS_CHANNEL_LINK
+    )
+    await context.bot.edit_message_text(
+        text=f"Congratulations! You are now a member! 🎉\nSend me a link to a YouTube video/playlist, and I'll send you the MP3(s)!",
+        chat_id=user_id,
+        message_id=message_id,
+        reply_markup=InlineKeyboardMarkup([[success_button]]),
+    )
+
+
+async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     member, admin = await check_membership(update, context)
     is_own_chat = update.effective_chat.id == update.effective_user.id
     if not admin and not is_own_chat:
@@ -170,10 +210,11 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
             text="Join Channel", url=MEMBERS_CHANNEL_LINK
         )
         keyboard = InlineKeyboardMarkup([[join_button]])
-        await update.message.reply_text(
-            "You must be a member to use this bot.\Click the button below to join the members channel.",
+        message = await update.message.reply_text(
+            "You must be a member to use this bot.\nClick the button below to join the members channel.",
             reply_markup=keyboard,
         )
+        save_init_message_data(update.effective_user.id, message.message_id)
         return
 
     if update.message.text == "/start":
@@ -230,15 +271,23 @@ async def message_handler(update, context: ContextTypes.DEFAULT_TYPE):
 
 def build_bot(token: str) -> Application:
     application = ApplicationBuilder().token(token).build()
-    url_pattern = re.compile(r"https?://\S+")
+    application.add_handler(
+        ChatMemberHandler(
+            member_join_handler,
+            ChatMemberHandler.CHAT_MEMBER,
+            chat_id=int(MEMBERS_CHANNEL_ID),
+        )
+    )
     application.add_handler(CommandHandler("start", message_handler))
+    url_pattern = re.compile(r"https?://\S+")
     application.add_handler(MessageHandler(filters.Regex(url_pattern), message_handler))
     return application
 
 
 def run_polling(application: Application):
-    application.run_polling()
+    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
-    run_polling(build_bot(BOT_TOKEN))
+    token = DEBUG_BOT_TOKEN if DEBUG else BOT_TOKEN
+    run_polling(build_bot(token))
