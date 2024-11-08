@@ -32,6 +32,8 @@ DEBUG = os.environ.get("DEBUG", "false").lower() == "true"
 MEMBERS_CHANNEL_ID = os.environ["MEMBERS_CHANNEL_ID"]
 MEMBERS_CHANNEL_LINK = os.environ["MEMBERS_CHANNEL_LINK"]
 NEW_USERS_TABLE = os.environ["NEW_USERS_TABLE"]
+ERRORS_TABLE = os.environ["ERRORS_TABLE"]
+MAXIMUM_PLAYLIST_LENGTH = int(os.environ.get("MAXIMUM_PLAYLIST_LENGTH", 30))
 
 MAX_RETRIES_FOR_SENDING_PLACEHOLDER_MESSAGE = 5
 
@@ -39,7 +41,9 @@ session = boto3.Session(profile_name="LambdaFlowFullAccess")
 sqs_client = session.client("sqs", region_name="eu-west-2")
 sns_client = session.client("sns", region_name="eu-west-2")
 dynamodb = session.resource("dynamodb", region_name="eu-west-2")
-table = dynamodb.Table(NEW_USERS_TABLE)
+new_users_table = dynamodb.Table(NEW_USERS_TABLE)
+errors_table = dynamodb.Table(ERRORS_TABLE)
+queue_url = sqs_client.get_queue_url(QueueName=SQS_QUEUE)["QueueUrl"]
 
 if DEBUG:
     logging.basicConfig(
@@ -118,12 +122,17 @@ def parse_message_for_urls(message):
         yield url
 
 
-async def playlist_info(url, bot, chat_id):
+async def playlist_info(url, bot, chat_id, max_tracks=None):
     with yt_dlp.YoutubeDL({"extract_flat": True}) as flat:
         info = flat.extract_info(url, download=False)
         title = info["title"]
         count = info["playlist_count"]
         release_year = info.get("release_year")
+        if max_tracks and count > max_tracks:
+            await bot.send_message(
+                chat_id,
+                f"Sorry, I can't download playlists with more than {max_tracks} tracks.",
+            )
         message = helpers.escape_markdown(
             f"{title} ({count} tracks){' (' + release_year + ')' if release_year else ''}"
         )
@@ -143,11 +152,11 @@ async def playlist_info(url, bot, chat_id):
 
 
 def save_init_message_data(user_id, message_id):
-    table.put_item(Item={"user_id": user_id, "message_id": message_id})
+    new_users_table.put_item(Item={"user_id": user_id, "message_id": message_id})
 
 
 def get_init_message_data(user_id):
-    row = table.get_item(Key={"user_id": user_id})
+    row = new_users_table.get_item(Key={"user_id": user_id})
     return row["Item"] if "Item" in row else None
 
 
@@ -196,7 +205,49 @@ async def member_join_handler(update, context: ContextTypes.DEFAULT_TYPE):
         message_id=message_id,
         reply_markup=InlineKeyboardMarkup([[success_button]]),
     )
-    table.delete_item(Key={"user_id": user_id})
+    new_users_table.delete_item(Key={"user_id": user_id})
+
+
+async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await context.bot.send_message(
+        update.effective_chat.id,
+        "Send me a link to a YouTube video or playlist, and I'll send you the MP3(s)! "
+        "Messages may contain multiple URLs. Messages without URLs (that are not commands "
+        "e.g. /start) will be ignored. There is a maximum file size of 50MB, and a maximum "
+        f"playlist length of {MAXIMUM_PLAYLIST_LENGTH} tracks. ",
+    )
+
+
+async def retry_all_failures(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    response = errors_table.query(
+        dynamodb.conditions.Key("chat_id").eq(update.effective_chat.id)
+    )
+    for item in response["Items"]:
+        video_url = item["video_url"]
+        message_id = item["message_id"]
+        message_attrs = {
+            "chat_id": {
+                "DataType": "String",
+                "StringValue": str(update.effective_chat.id),
+            },
+            "placeholder_audio_id": {
+                "DataType": "String",
+                "StringValue": str(message_id),
+            },
+        }
+        try:
+            sns_client.publish(
+                TopicArn=SNS_TOPIC, Message=video_url, MessageAttributes=message_attrs
+            )
+            errors_table.delete_item(
+                Key={"chat_id": update.effective_chat.id, "message_id": message_id}
+            )
+        except Exception as e:
+            logger.error(f"Failed to retry message {message_id}: {e}")
+            await context.bot.send_message(
+                update.effective_chat.id, f"Failed to retry {video_url}: {e}"
+            )
+        await asyncio.sleep(2)
 
 
 async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -232,7 +283,6 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    queue_url = sqs_client.get_queue_url(QueueName=SQS_QUEUE)["QueueUrl"]
     for url in parse_message_for_urls(update.message.text):
         if "spotify" in url:
             await context.bot.send_message(
@@ -250,7 +300,10 @@ async def message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             if "playlist" in url:
                 async for playlist_entry_url in playlist_info(
-                    url, context.bot, update.effective_chat.id
+                    url,
+                    context.bot,
+                    update.effective_chat.id,
+                    max_tracks=MAXIMUM_PLAYLIST_LENGTH,
                 ):
                     await queue_single_url(
                         update,
@@ -283,6 +336,8 @@ def build_bot(token: str) -> Application:
         )
     )
     application.add_handler(CommandHandler("start", message_handler))
+    application.add_handler(CommandHandler("retry", retry_all_failures))
+    application.add_handler(CommandHandler("instructions", instructions))
     url_pattern = re.compile(r"https?://\S+")
     application.add_handler(MessageHandler(filters.Regex(url_pattern), message_handler))
     return application
