@@ -9,11 +9,13 @@ from constants import S3_BUCKET
 from lib import (
     download_url,
     update_placeholder_audio_message,
+    update_placeholder_text,
 )
 from yt_downloader_cache import S3PersistentCache
 
 SNS_TOPIC = os.environ["SNS_TOPIC"]
 BOT_TOKEN = os.environ["BOT_TOKEN"]
+
 MAX_FILE_SIZE = int(50e6)  # 50MB
 
 logger = logging.getLogger(__name__)
@@ -61,7 +63,6 @@ def lambda_handler(event, _):
         # but the download was completed successfully; or we just still have a cached version.
         prefix = f"downloads/{hash(video_url)}/"
         existing = s3_client.list_objects_v2(Bucket=S3_BUCKET, Prefix=prefix)
-        tasks = []
         if "Contents" not in existing:
             # Download file(s) using yt-dlp
             for file in download_url(
@@ -72,7 +73,13 @@ def lambda_handler(event, _):
                 file_size = os.path.getsize(file.filename)
                 if file_size >= MAX_FILE_SIZE:
                     loop.run_until_complete(
-                        bot.send_message(chat_id, f"File too large: {video_url}")
+                        update_placeholder_text(
+                            chat_id,
+                            placeholder_message_id,
+                            bot,
+                            video_url,
+                            "File too large!",
+                        )
                     )
                     continue
 
@@ -84,7 +91,7 @@ def lambda_handler(event, _):
                     s3_client.put_object(Bucket=S3_BUCKET, Key=s3_key, Body=audio_bytes)
                     loop.run_until_complete(
                         update_placeholder_audio_message(
-                            chat_id, placeholder_message_id, audio_bytes, bot
+                            chat_id, placeholder_message_id, audio_bytes, bot, video_url
                         )
                     )
         else:
@@ -94,7 +101,7 @@ def lambda_handler(event, _):
                 audio_bytes = file_object["Body"].read()
                 loop.run_until_complete(
                     update_placeholder_audio_message(
-                        chat_id, placeholder_message_id, audio_bytes, bot
+                        chat_id, placeholder_message_id, audio_bytes, bot, video_url
                     )
                 )
 

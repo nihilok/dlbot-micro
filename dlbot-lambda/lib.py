@@ -14,6 +14,7 @@ from yt_dlp.cache import Cache
 
 from yt_downloader_cache import S3PersistentCache
 from constants import MAX_AUDIO_UPDATE_RETRIES
+from boto3_clients import dynamodb_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -127,11 +128,55 @@ def download_url(url: str, chat_id=None, cache_cls=Cache):
         file, exit_code = download_single_url(url, cache_cls)
         if not exit_code:
             return (f for f in [file])
-        raise Exception(f"Could not download from URL: {url}")
+        raise StopIteration
+
+
+ERRORS_TABLE = os.environ["ERRORS_TABLE"]
+table = dynamodb_client.Table(ERRORS_TABLE)
+
+
+def record_error_message(chat_id, message_id, video_url):
+    table.put_item(
+        Item={
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "video_url": video_url,
+        }
+    )
+
+
+async def update_placeholder_text(
+    chat_id, message_id, bot, video_url, message, record_error=False, retry=0
+):
+    dummy_audio = InputMediaAudio(
+        media=b"",
+        title=message,
+        caption=video_url,
+    )
+    try:
+        await bot.edit_message_media(dummy_audio, chat_id, message_id)
+    except Exception as e:
+        if isinstance(e, RetryAfter):
+            sleep_time = e.retry_after
+        else:
+            sleep_time = randint(3, 10)
+
+        if retry < MAX_AUDIO_UPDATE_RETRIES:
+            await asyncio.sleep(sleep_time)
+            logger.warning(
+                f"Retrying ({retry + 1}/{MAX_AUDIO_UPDATE_RETRIES}) (ERROR: {e})"
+            )
+            return await update_placeholder_text(
+                chat_id, message_id, bot, video_url, message, retry=retry + 1
+            )
+        if record_error:
+            record_error_message(chat_id, message_id, video_url)
+
+        raise e
 
 
 async def update_placeholder_audio_message(
-    chat_id, message_id, audio_bytes, bot: Bot, retry=0
+    chat_id, message_id, audio_bytes, bot: Bot, video_url, retry=0
 ):
     tg_audio = InputMediaAudio(audio_bytes)
     try:
@@ -148,9 +193,17 @@ async def update_placeholder_audio_message(
                 f"Retrying ({retry + 1}/{MAX_AUDIO_UPDATE_RETRIES}) (ERROR: {e})"
             )
             return await update_placeholder_audio_message(
-                chat_id, message_id, audio_bytes, bot, retry=retry + 1
+                chat_id, message_id, audio_bytes, bot, video_url, retry=retry + 1
             )
 
+        await update_placeholder_text(
+            chat_id,
+            message_id,
+            bot,
+            video_url,
+            "Error sending audio",
+        )
+        record_error_message(chat_id, message_id, video_url)
         raise e
 
 
