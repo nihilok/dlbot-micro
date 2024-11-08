@@ -337,7 +337,7 @@ def build_bot(token: str) -> Application:
     )
     application.add_handler(CommandHandler("start", message_handler))
     application.add_handler(CommandHandler("retry", retry_all_failures))
-    application.add_handler(CommandHandler("instructions", instructions))
+    application.add_handler(CommandHandler("help", instructions))
     url_pattern = re.compile(r"https?://\S+")
     application.add_handler(MessageHandler(filters.Regex(url_pattern), message_handler))
     return application
